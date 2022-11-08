@@ -1,0 +1,501 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+
+    <title>REPL</title>
+
+    <link rel="icon" type="image/png" href="favicon.png" />
+    <link rel="stylesheet" href="https://pyscript.net/latest/pyscript.css" />
+    <script defer src="https://pyscript.net/latest/pyscript.js"></script>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.2.2/dist/css/bootstrap.min.css" rel="stylesheet" integrity="sha384-Zenh87qX5JnK2Jl0vWa8Ck2rdkQ2Bzep5IDxbcnCeuOxjzrPF/et3URy9Bv1WTRi" crossorigin="anonymous">
+
+    <style type="text/css">
+    body {
+      margin: 10px;
+    }
+    </style>
+
+
+  </head>
+  <py-config type="toml">
+    packages = ["numpy", "matplotlib"]
+  </py-config></h2>
+
+  <body>
+<h2>Deterministic Salvo Model with No Leakers </h2>
+
+<a href="https://www.grupodcsolutions.com/post/2018/04/15/hughes-salvo-model">Salvo model background and the Python implementation underlying this tool.</a> <p>
+
+<b>Frigate</b></br>
+
+<table>
+  <tr>
+    <td>Anti-ship missiles it can fire in one salvo</td><td><input width=10 type="text" id="frigate_missiles" value='8'/></td>
+  </tr>
+  <tr>
+    <td>Surface-to-air missiles it can fire in one salvo</td><td> <input width=10 type="text" id="frigate_sam" value='6'/></td>
+  </tr>
+  <tr>
+    <td>Initial staying power in missile hits</td><td>  <input width=10 type="text" id="frigate_staying_power" value='1.5'/></td>
+  </tr>
+</table>
+<table>
+
+<b>Corvette</b></br>
+  <table>
+    <tr>
+      <td>Anti-ship missiles it can fire in one salvo</td><td><input width=10 type="text" id="corvette_missiles" value='4'/></td>
+    </tr>
+    <tr>
+      <td>Surface-to-air missiles it can fire in one salvo</td><td> <input width=10 type="text" id="corvette_sam" value='2'/></td>
+    </tr>
+    <tr>
+      <td>Initial staying power in missile hits</td><td>  <input width=10 type="text" id="corvette_staying_power" value='1'/></td>
+    </tr>
+  </table>
+  <table>
+
+
+<b style="color:blue">BLUFOR</b></br>
+<table>
+  <tr>
+    <td>Ship Type: </td>
+    <td>
+      <select class="form-select" id="blufor_ship_select">
+         <option value="frigate">Frigate</option>
+         <option value="corvette">Corvette</option>
+      </select>
+    </td>
+  </tr>
+</table>
+
+<table>
+<tbody>
+  <tr>
+    <td>Number of ships in the group</td>
+    <td><input width=10 type="text" id="side1_ships" value='2'/></td>
+  </tr>
+  <tr>
+    <td>Fraction of enemy that can be located (0-1) </td>
+    <td><input width=10 type="text" id="side1_scouting" value='1'/></td>
+  </tr>
+  <tr>
+    <td>Efficiency of the group's defenses (0-1) </td>
+    <td><input width=10 type="text" id="side1_readiness" value='1'/></td>
+  </tr>
+</tbody>
+</table>
+
+<b style="color:red">REDFOR</b></br>
+<table>
+  <tr>
+    <td>Ship Type: </td>
+    <td>
+      <select class="form-select" id="redfor_ship_select">
+         <option value="frigate">Frigate</option>
+         <option value="corvette">Corvette</option>
+      </select>
+    </td>
+  </tr>
+</table>
+
+<table>
+<tbody>
+  <tr>
+    <td>Number of ships in the group</td>
+    <td><input width=10 type="text" id="side2_ships" value='3'/></td>
+  </tr>
+  <tr>
+    <td>Fraction of enemy that can be located (0-1) </td>
+    <td><input width=10 type="text" id="side2_scouting" value='1'/></td>
+  </tr>
+  <tr>
+    <td>Efficiency of the group's defenses (0-1) </td>
+    <td><input width=10 type="text" id="side2_readiness" value='1'/></td>
+  </tr>
+</tbody>
+</table>
+
+<div id="choices"></div>
+
+<py-button label='Run'>
+def on_click(event): salvo_battle()
+</py-button>
+
+<py-script>
+import numpy as np
+import matplotlib.pyplot as plt
+</py-script>
+
+<py-script output="sim_output">
+
+class Ship:
+    ''' A ship carrying anti-ship cruise missiles.
+
+    Attributes:
+        * type (str): the type of ship, for labeling purposes only.
+        * op (int): the number of anti-ship cruise missiles the ship can fire in one salvo.
+        * dp (int): the number of SAM the ship can fire in one salvo against incoming missiles.
+        * sp (float): initial staying power in missile hits.
+        * hp (float): hit points remaining.
+        * status (fraction): fraction of its staying power remaining. 1 is intact, 0 is OOA.
+    '''
+
+    def __init__(self, type, op, dp, sp):
+        self.type = type
+        self.op = op
+        self.dp = dp
+        self.sp = sp
+        self.hp = sp
+        self.status = 1
+
+    def damage(self, damage):
+        ''' Lowers the ship's 'hp' attribute by the input amount.
+
+        Args:
+            * damage (float): points of damage to subtract. HP cannot go below 0.
+        '''
+        damage = min(damage, self.hp)
+        damage = max(damage, 0)
+        self.hp -= damage
+        self.status = self.hp / self.sp
+
+    def ascm_fire(self):
+        ''' Returns cruise missile salvo size based on status.'''
+        return self.op * self.status
+
+    def sam_fire(self):
+        ''' Returns SAM salvo size based on status.'''
+        return self.dp * self.status
+
+    def __str__(self):
+        ''' String override. Returns ship type, status as percentage, OP, and DP.'''
+        shipStatus = round(self.status * 100, 2)
+        shipOp = round(self.ascm_fire(), 2)
+        shipDp = round(self.sam_fire(), 2)
+        shipString = "{} ({}%) OP: {} DP: {}\n".format(self.type, shipStatus, shipOp, shipDp)
+        return shipString
+
+class Missiles:
+    ''' The specification of the missile systems carried by a group of ships.
+
+    Attributes:
+        * launch_reliability (fraction): fraction of cruise missiles that launch successfully.
+        * ascm_to_hit (fraction): fraction of cruise missiles that hit, in the absence of defences.
+        * sam_to_hit (fraction): fraction of SAM that successfully intercept incoming missiles.
+    '''
+    def __init__(self, launch_reliability = 1, ascm_to_hit = 1, sam_to_hit = 1):
+        self.launch_reliability = launch_reliability
+        self.ascm_to_hit = ascm_to_hit
+        self.sam_to_hit = sam_to_hit
+
+    def offensive_modifier(self):
+        ''' Returns the fraction of missiles that launch AND hit.'''
+        return self.launch_reliability * self.ascm_to_hit
+
+class Group:
+    ''' A group of ships.
+
+    Attributes:
+        * side (str): the group's side identifier, for labelling purposes.
+        * ship (Ship): the ship type the group is composed of.
+        * units (int): the number of ships of type (ship) in the group.
+            * oob (list): a list of Ship objects representing the group.
+        * scouting (fraction): fraction of enemy group that can be located and targeted.
+        * readiness (fraction): efficiency of the group's defences.
+        * missiles (Missiles): the missile systems used by the group.
+    '''
+    def __init__(self, side, ship, units, scouting = 1, readiness = 1, missiles = Missiles()):
+        self.side = side
+        self.oob = [Ship(ship.type, ship.op, ship.dp, ship.sp) for i in range(units)]
+        self.scouting = scouting
+        self.readiness = readiness
+        self.missiles = missiles
+
+    def striking_power(self):
+        ''' Returns the raw striking power of the group.'''
+        salvoSize = sum(ship.ascm_fire() for ship in self.oob)
+        strikingPower = salvoSize * self.scouting * self.missiles.offensive_modifier()
+        return strikingPower
+
+    def defensive_power(self):
+        ''' Returns the raw defensive power of the group.'''
+        defensiveSalvoSize = sum(ship.sam_fire() for ship in self.oob)
+        defensivePower = defensiveSalvoSize * self.readiness * self.missiles.sam_to_hit
+        return defensivePower
+
+    def combat_power(self, enemy):
+        ''' Returns the combat power in excess of the enemy's defences.
+
+        Arguments:
+            * enemy (Group): the target group.
+        '''
+        return max(0, (self.striking_power() - enemy.defensive_power()))
+
+    def total_status(self):
+        ''' Returns the sum of the 'status' attributes of all ships in the group.'''
+        return sum(i.status for i in self.oob)
+
+    def damage(self, damage):
+        ''' Damages the group. Applied to all ships consecutively until damage reaches
+        zero, or no more targets are available.
+
+        Arguments:
+            * damage (float): the total amount damage to inflict upon the group.
+        '''
+        while damage > 0 and self.total_status() > 0:
+            for i in self.oob:
+                if i.status > 0:
+                    if damage > i.hp:
+                        damage -= i.hp
+                        i.damage(i.hp)
+                    else:
+                        i.damage(damage)
+                        damage = 0
+
+    def __str__(self):
+        ''' String override. Returns the percentage of the original staying power remaining,
+        and the (equivalent) number of active ships.
+        '''
+        percentage = round((self.total_status() / len(self.oob)) * 100, 2)
+        activeShips = round(self.total_status(), 2)
+        groupString = "{}: {}% ({} active ships)".format(self.side, percentage, activeShips)
+        return groupString
+
+class Battle:
+    ''' A battle between two groups.
+
+    Attributes:
+        * blu (Group): the BLUFOR group.
+        * red (Group): the REDFOR group.
+        * duration (int): the duration of the battle in pulses. If zero (default) the
+        battle goes on until one side is wiped out.
+    '''
+    def __init__(self, blu, red, duration = 0):
+        self.blu = blu
+        self.red = red
+        self.duration = duration
+        self.pulse = 0
+        # Lists for plotting
+        self.bluPlot = [self.blu.total_status()]
+        self.redPlot = [self.red.total_status()]
+        self.time = [0]
+
+    def add_to_plot(self):
+        self.bluPlot.append(self.blu.total_status())
+        self.redPlot.append(self.red.total_status())
+        self.time.append(self.pulse)
+
+    def stalemate(self):
+        ''' Checks whether the battle has reached a stalemate. Only possible if SAM fire
+        is 100% effective for both sides (missile sam_to_hit = 1)'''
+        stalemate = self.blu.combat_power(self.red) == 0 and self.red.combat_power(self.blu) == 0
+        return stalemate
+
+    def blu_surprise(self):
+        ''' Fires one BLUFOR salvo at REDFOR, without retaliation.'''
+        if self.pulse == 0:
+            # print("\nBattle starts between {} and {}\n".format(self.blu.side, self.red.side))
+            PyScript.write("sim_output", "\nBattle starts between {} and {}\n".format(self.blu.side, self.red.side), append=True)
+            # print(self)
+            PyScript.write("sim_output", str(self), append=True)
+        self.pulse += 1
+        self.red.damage(self.blu.combat_power(self.red))
+        # print(self)
+        PyScript.write("sim_output", str(self), append=True)
+        # Add new values to the plotting lists
+        self.add_to_plot()
+
+    def red_surprise(self):
+        ''' Fires one REDFOR salvo at BLUFOR, without retaliation.'''
+        if self.pulse == 0:
+            # print("\nBattle starts between {} and {}\n".format(self.blu.side, self.red.side))
+            PyScript.write("sim_output", "\nBattle starts between {} and {}\n".format(self.blu.side, self.red.side), append=True)
+            # print(self)
+            PyScript.write("sim_output", str(self), append=True)
+        self.pulse += 1
+        self.blu.damage(self.red.combat_power(self.blu))
+        # print(self)
+        PyScript.write("sim_output", str(self), append=True)
+        # Add new values to the plotting lists
+        self.add_to_plot()
+
+    def salvo(self):
+        ''' Both sides fire at each other simultaneously.'''
+        if self.pulse == 0:
+            # print("\nBattle starts between {} and {}\n".format(self.blu.side, self.red.side))
+            PyScript.write("sim_output", "\nBattle starts between {} and {}\n".format(self.blu.side, self.red.side), append=True)
+            # print(self)
+            PyScript.write("sim_output", str(self), append=True)
+        bluDamageSustained = self.red.combat_power(self.blu)
+        redDamageSustained = self.blu.combat_power(self.red)
+        self.blu.damage(bluDamageSustained)
+        self.red.damage(redDamageSustained)
+        self.pulse += 1
+        # print(self)
+        PyScript.write("sim_output", str(self), append=True)
+        # Add new values to the plotting lists
+        self.add_to_plot()
+
+    def resolve(self):
+        ''' The battle is resolved for the specified duration, or until one side is wiped out.'''
+        if self.duration == 0:
+            while self.blu.total_status() != 0 and self.red.total_status() != 0:
+                self.salvo()
+                # Add new values to the plotting lists
+                self.add_to_plot()
+                if self.stalemate():
+                    # print("\nStalemate! Neither fleet can penetrate enemy missile defence.")
+                    PyScript.write("sim_output", "\nStalemate! Neither fleet can penetrate enemy missile defence.", append=True)
+                    break
+        else:
+            for _ in range(self.duration):
+                self.salvo()
+                # Add new values to the plotting lists
+                self.add_to_plot()
+
+
+
+    def plot(self):
+        x = np.array(self.time)
+        y = np.array(self.bluPlot)
+        z = np.array(self.redPlot)
+
+        width = 0.2
+
+        fig, ax = plt.subplots()
+        rects1 = ax.bar(x-0.1, y, width, color='tab:blue', zorder=3)
+        rects2 = ax.bar(x+0.1, z, width, color='tab:red', zorder=3)
+
+        ax.set_ylabel('Aggregated status')
+        ax.set_xlabel('Pulse')
+
+        ax.set_xticks(x)
+        #ax.set_yticks(np.arange(0,max(max(y),max(z))+1,1))
+
+        ax.legend((rects1[0],rects2[0]),(self.blu.side,self.red.side), loc=9)
+
+        ax.grid(which='major', axis='y', linestyle=':', alpha=0.5, zorder=0)
+        ax.grid(which='minor', axis='y', linestyle=':', alpha=0.25, zorder=0)
+
+        def autolabel(rects):
+            for rect in rects:
+                height = rect.get_height()
+                ax.text(rect.get_x() + rect.get_width()/2., height,
+                '{}'.format(round(height,2)),
+                ha='center', va='bottom')
+
+        autolabel(rects1)
+        autolabel(rects2)
+        #plt.show()
+        pyscript.write('plot', fig, append=False)
+
+
+    def __str__(self):
+        ''' String override. Returns the pulse number, and the status of the opposing groups.'''
+        battleString = "\nPulse {}:\n{} | {}".format(self.pulse, str(self.blu), str(self.red))
+        return(battleString)
+
+</py-script>
+
+<py-script>
+def salvo_battle():
+# Test battle. Scenario taken from Cares, page 23, Scenario VI
+  # Knox-Class frigate
+  global frigate, corvette
+
+  frigate_missiles = int(Element('frigate_missiles').element.value)
+  frigate_sam = float(Element('frigate_sam').element.value)
+  frigate_staying_power = float(Element('frigate_staying_power').element.value)
+  frigate = Ship("Frigate", frigate_missiles, frigate_sam, frigate_staying_power)
+
+  corvette_missiles = int(Element('corvette_missiles').element.value)
+  corvette_sam = float(Element('corvette_sam').element.value)
+  corvette_staying_power = float(Element('corvette_staying_power').element.value)
+  corvette = Ship("Corvette", corvette_missiles, corvette_sam, corvette_staying_power)
+
+  # String override demo
+  # print(frigate)
+  PyScript.write("sim_output", str(frigate), )
+  PyScript.write("sim_output", str(corvette), append=True)
+
+  # Anti-Ship Cruise Missiles and SAM used by both groups
+  #basic = Missiles()
+  standard = Missiles(1,0.61,0.35)
+
+  # Group creation
+  # BLUFOR
+  global side1_ships, blufor_ship, redfor_ship
+  side1_ships = int(Element('side1_ships').element.value)
+  side1_scouting = float(Element('side1_scouting').element.value)
+  side1_readiness= float(Element('side1_readiness').element.value)
+  blufor_ship = Element('blufor_ship_select').element.value
+  if blufor_ship == 'frigate': blufor = Group("BLUFOR", frigate, side1_ships, side1_scouting, side1_readiness, standard)
+  if blufor_ship == 'corvette': blufor = Group("BLUFOR", corvette, side1_ships, side1_scouting, side1_readiness, standard)
+
+  # REDFOR
+  side2_ships = int(Element('side2_ships').element.value)
+  side2_scouting = float(Element('side2_scouting').element.value)
+  side2_readiness= float(Element('side2_readiness').element.value)
+  redfor_ship = Element('redfor_ship_select').element.value
+  if redfor_ship == 'frigate': redfor = Group("REDFOR", frigate, side2_ships, side2_scouting, side2_readiness, standard)
+  if redfor_ship == 'corvette': redfor = Group("REDFOR", corvette, side2_ships, side2_scouting, side2_readiness, standard)
+
+  # Battle creation, no duration specified
+  battle = Battle(blufor, redfor)
+
+  # Battle resolves until one side is wiped out
+  #battle.blu_surprise()
+  #battle.salvo()
+  battle.resolve()
+  battle.plot()
+
+  #pyscript.write('plot', battle.plot())
+</py-script>
+
+<py-script>
+salvo_battle()
+</py-script>
+
+<p id="sim_output"></p>
+
+<div id="plot"></div>
+
+
+<py-script>
+# Import libraries
+
+import matplotlib.pyplot as plt
+
+
+# Set up a proxy to be called when a 'change'
+# event occurs in the select control
+from js import document
+from pyodide.ffi import create_proxy
+# Read the value of the select control
+# and call 'plot'
+def selectChange(event):
+   global blufor_ship, redfor_ship
+   blufor_ship = document.getElementById("blufor_ship_select").value
+   #pyscript.write("choices", blufor_ship)
+   redfor_ship = document.getElementById("redfor_ship_select").value
+   #pyscript.write("choices", redfor_ship, append=True )
+# set the proxy
+def setup():
+   # Create a JsProxy for the callback function
+   change_proxy = create_proxy(selectChange)
+   e = document.getElementById("blufor_ship_select")
+   e.addEventListener("change", change_proxy)
+   f = document.getElementById("redfor_ship_select")
+   f.addEventListener("change", change_proxy)
+setup()
+# Intitially call plot with 'Tmax'
+#pyscript.write("choices", blufor_ship )
+#pyscript.write("choices", redfor_ship, append=True )
+# plot('Tmax')
+</py-script>
+
+</body>
+</html>
